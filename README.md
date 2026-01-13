@@ -1,36 +1,22 @@
 # Worktrunk Full-Stack Example
 
-This repo demonstrates a comprehensive worktrunk configuration for full-stack development with:
+Demonstrates worktrunk hooks for full-stack development:
 
-1. **Unique ports per worktree** — Backend and frontend get deterministic ports based on branch name
-2. **Auto-generated .env files** — Environment files are generated with correct port numbers
-3. **Tmux session per worktree** — 4-pane layout: shell, claude, backend, frontend
-4. **Clean removal** — Generated files are cleaned up when removing worktrees
+- **Unique ports per worktree** — deterministic, no collisions
+- **Auto-generated .env files** — with correct ports
+- **Tmux 4-pane session** — shell, claude, backend, frontend
+- **Conda activation** — in all panes
+- **Clean removal** — stops servers, removes generated files
 
-## Quick Start
+## Try It
 
 ```bash
-# Create a new worktree for your feature
-wt switch feature/my-feature --create
-
-# A tmux session was created in the background
-# Attach to it:
-tmux attach -t feature-my-feature
-
-# When done, remove the worktree
-# This will clean up generated files and kill the tmux session
-wt remove feature/my-feature
+wt switch --create -x 'tmux attach -t {{ branch | sanitize }}' feature/demo
 ```
 
-## What Happens on `wt switch --create`
+Detach with `Ctrl-b d`. Remove with `wt remove feature/demo`.
 
-1. **post-create** hooks run (blocking):
-   - `.env`, `.env.backend`, `.env.frontend` are generated with unique ports
-
-2. **post-start** hooks run (background):
-   - A tmux session is created with 4 panes
-
-## Tmux Session Layout
+## What You Get
 
 ```
 +----------+----------+
@@ -40,37 +26,34 @@ wt remove feature/my-feature
 +----------+----------+
 ```
 
-Each pane is:
-- Set to the worktree directory
-- Ready for you to start commands
-- Can be configured to auto-start servers (see `.config/wt.toml`)
+Each pane has conda activated and `.env` sourced. Backend/frontend servers start automatically on unique ports.
 
-## Port Allocation
+## Prerequisites
 
-Ports are deterministic based on branch name using `hash_port`:
+- [Worktrunk](https://github.com/max-sixty/worktrunk) 0.13+ (for `--execute` templates)
+- tmux
+- micromamba or conda:
 
-| Branch | Backend Port | Frontend Port |
-|--------|--------------|---------------|
-| main   | (default: 8000) | (default: 3000) |
-| feature/auth | ~12XXX | ~15XXX |
-| feature/api  | ~11XXX | ~14XXX |
-
-The exact port depends on the hash, but it's stable — the same branch always gets the same ports.
-
-## Conda Integration
-
-To activate a conda environment in each tmux pane, uncomment the `conda activate` lines in `.config/wt.toml`.
-
-Note: The conda activation happens *inside* tmux, not in your calling shell. This is because:
-- post-start hooks run in a background subprocess
-- They cannot modify the parent shell's environment
-- The tmux session is independent and can have its own environment
+```bash
+micromamba create -n wt-fullstack python=3.11 -y
+```
 
 ## Customization
 
-Edit `.config/wt.toml` to:
-- Change the tmux layout
-- Add conda activation
-- Auto-start backend/frontend servers
-- Add database setup
-- Customize cleanup behavior
+The config is ~60 lines. Key files:
+
+- `.config/wt.toml` — hook definitions
+- `scripts/pane-init.sh` — pane setup (conda, .env, clear)
+
+To use real servers instead of `python -m http.server`, edit the `tmux send-keys` lines in `.config/wt.toml`:
+
+```diff
+ # Pane 1: Backend server
+-tmux send-keys -t "$S:dev.1" 'source scripts/pane-init.sh && set -a && source .env.backend && set +a && cd backend && python -m http.server -b localhost $PORT' Enter
++tmux send-keys -t "$S:dev.1" 'source scripts/pane-init.sh && set -a && source .env.backend && set +a && cd backend && uvicorn main:app --port $PORT' Enter
+ # Pane 3: Frontend server
+-tmux send-keys -t "$S:dev.3" 'source scripts/pane-init.sh && set -a && source .env.frontend && set +a && cd frontend && python -m http.server -b localhost $PORT' Enter
++tmux send-keys -t "$S:dev.3" 'source scripts/pane-init.sh && set -a && source .env.frontend && set +a && cd frontend && npm run dev -- --port $PORT' Enter
+```
+
+Use `wt list` to see worktree URLs — bright means the port is listening.

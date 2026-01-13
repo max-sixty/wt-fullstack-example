@@ -1,4 +1,4 @@
-# Environment files (copied/generated per-worktree)
+# Generated per-worktree (cleaned up by pre-remove hook)
 .env
 .env.local
 .env.backend
