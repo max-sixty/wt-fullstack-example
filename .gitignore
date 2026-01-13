@@ -1,0 +1,25 @@
+# Environment files (copied/generated per-worktree)
+.env
+.env.local
+.env.backend
+.env.frontend
+
+# Python/Conda
+.venv/
+__pycache__/
+*.pyc
+
+# Node.js
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

@@ -1,0 +1,8 @@
+{
+  "name": "wt-fullstack-frontend",
+  "version": "0.1.0",
+  "description": "Example frontend for worktrunk full-stack demo",
+  "scripts": {
+    "dev": "echo 'Starting frontend dev server on port ${PORT:-3000}' && python3 -m http.server ${PORT:-3000}"
+  }
+}

@@ -1,0 +1,191 @@
+# Worktrunk Project Configuration
+# Full-stack development with unique ports per worktree
+#
+# This config demonstrates:
+# 1. Unique ports per worktree using hash_port filter
+# 2. Environment file generation with port interpolation
+# 3. Tmux session creation with 4 panes (shell, claude, backend, frontend)
+# 4. Cleanup of generated files on worktree removal
+
+# ============================================================================
+# Port Allocation Strategy
+# ============================================================================
+# Each worktree gets deterministic ports in the 10000-19999 range:
+#   - Backend:  {{ ('backend-' ~ branch) | hash_port }}
+#   - Frontend: {{ ('frontend-' ~ branch) | hash_port }}
+#
+# The 'backend-' and 'frontend-' prefixes ensure different hashes, so the
+# backend and frontend ports won't collide.
+#
+# Examples for branch "feature/auth":
+#   - Backend might get port 12847
+#   - Frontend might get port 15923
+
+# ============================================================================
+# Post-Create Hooks — Block until complete
+# ============================================================================
+# These run synchronously after worktree creation. The user won't be
+# switched to the new worktree until these complete.
+
+[post-create]
+# Generate .env files with worktree-specific ports
+env = """
+# Calculate ports once
+BACKEND_PORT={{ ('backend-' ~ branch) | hash_port }}
+FRONTEND_PORT={{ ('frontend-' ~ branch) | hash_port }}
+
+# Main .env file
+cat > .env << EOF
+# Generated for branch: {{ branch }}
+# Backend: http://localhost:$BACKEND_PORT
+# Frontend: http://localhost:$FRONTEND_PORT
+
+BACKEND_PORT=$BACKEND_PORT
+BACKEND_HOST=localhost
+FRONTEND_PORT=$FRONTEND_PORT
+FRONTEND_HOST=localhost
+API_URL=http://localhost:$BACKEND_PORT
+DATABASE_URL=postgres://postgres:dev@localhost:5432/{{ branch | sanitize_db }}
+DEBUG=true
+SECRET_KEY=dev-secret-key-{{ branch | sanitize }}
+EOF
+
+# Backend-specific .env
+cat > .env.backend << EOF
+# Generated for branch: {{ branch }}
+PORT=$BACKEND_PORT
+HOST=0.0.0.0
+DATABASE_URL=postgres://postgres:dev@localhost:5432/{{ branch | sanitize_db }}
+CORS_ORIGINS=http://localhost:$FRONTEND_PORT
+LOG_LEVEL=debug
+EOF
+
+# Frontend-specific .env
+cat > .env.frontend << EOF
+# Generated for branch: {{ branch }}
+PORT=$FRONTEND_PORT
+VITE_API_URL=http://localhost:$BACKEND_PORT
+VITE_DEBUG=true
+EOF
+
+echo "Generated .env files for {{ branch }}"
+echo "  Backend:  http://localhost:$BACKEND_PORT"
+echo "  Frontend: http://localhost:$FRONTEND_PORT"
+"""
+
+# ============================================================================
+# Post-Start Hooks — Run in background
+# ============================================================================
+# These run asynchronously after worktree creation. The user is switched
+# immediately; these run in parallel in the background.
+# Output is logged to .git/wt-logs/
+
+[post-start]
+# Create a tmux session with 4 panes for this worktree
+# Layout:
+#   +----------+----------+
+#   |  shell   |  claude  |
+#   +----------+----------+
+#   | backend  | frontend |
+#   +----------+----------+
+#
+# NOTE: This script creates the tmux session in the background.
+# To attach to it, run: tmux attach -t {{ branch | sanitize }}
+#
+# The conda activation is done within tmux, not in the parent shell,
+# because post-start hooks run in a subshell that can't modify the
+# calling shell's environment.
+
+tmux = """
+SESSION_NAME="{{ branch | sanitize }}"
+WORKTREE_PATH="{{ worktree_path }}"
+BACKEND_PORT={{ ('backend-' ~ branch) | hash_port }}
+FRONTEND_PORT={{ ('frontend-' ~ branch) | hash_port }}
+
+# Kill existing session if it exists (clean restart)
+tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
+
+# Create new session with first pane (shell)
+# The -d flag creates detached, so the hook doesn't hang
+tmux new-session -d -s "$SESSION_NAME" -c "$WORKTREE_PATH" -n "dev"
+
+# Configure the pane title for the shell pane
+tmux select-pane -T "shell"
+
+# Split for Claude Code (right of shell)
+tmux split-window -h -c "$WORKTREE_PATH"
+tmux select-pane -T "claude"
+
+# Split for backend (below shell)
+tmux select-pane -t 0
+tmux split-window -v -c "$WORKTREE_PATH"
+tmux select-pane -T "backend"
+
+# Split for frontend (below claude, which is now pane 2)
+tmux select-pane -t 2
+tmux split-window -v -c "$WORKTREE_PATH"
+tmux select-pane -T "frontend"
+
+# Now set up each pane with its command
+# Pane layout after splits:
+#   0: shell    1: backend
+#   2: claude   3: frontend
+
+# Shell pane (0) - ready for git commands
+# If using conda, activate the environment
+tmux send-keys -t "$SESSION_NAME:dev.0" "cd '$WORKTREE_PATH'" Enter
+# Uncomment the next line to activate conda:
+# tmux send-keys -t "$SESSION_NAME:dev.0" "conda activate myenv" Enter
+tmux send-keys -t "$SESSION_NAME:dev.0" "echo 'Shell ready - branch: {{ branch }}'" Enter
+
+# Claude Code pane (2)
+tmux send-keys -t "$SESSION_NAME:dev.2" "cd '$WORKTREE_PATH'" Enter
+# Uncomment to auto-start Claude Code:
+# tmux send-keys -t "$SESSION_NAME:dev.2" "claude" Enter
+
+# Backend pane (1) - show port info, ready to start server
+tmux send-keys -t "$SESSION_NAME:dev.1" "cd '$WORKTREE_PATH'" Enter
+# Uncomment to activate conda for backend:
+# tmux send-keys -t "$SESSION_NAME:dev.1" "conda activate myenv" Enter
+tmux send-keys -t "$SESSION_NAME:dev.1" "echo 'Backend server pane - port: $BACKEND_PORT'" Enter
+# Uncomment to auto-start backend:
+# tmux send-keys -t "$SESSION_NAME:dev.1" "python -m uvicorn main:app --port $BACKEND_PORT --reload" Enter
+
+# Frontend pane (3) - show port info, ready to start server
+tmux send-keys -t "$SESSION_NAME:dev.3" "cd '$WORKTREE_PATH'" Enter
+tmux send-keys -t "$SESSION_NAME:dev.3" "echo 'Frontend server pane - port: $FRONTEND_PORT'" Enter
+# Uncomment to auto-start frontend:
+# tmux send-keys -t "$SESSION_NAME:dev.3" "npm run dev -- --port $FRONTEND_PORT" Enter
+
+# Select the shell pane as active
+tmux select-pane -t "$SESSION_NAME:dev.0"
+
+echo "Tmux session '$SESSION_NAME' created"
+echo "Attach with: tmux attach -t $SESSION_NAME"
+"""
+
+# ============================================================================
+# Pre-Remove Hooks — Block before removal, fail-fast
+# ============================================================================
+# These run synchronously before worktree removal. If any hook fails,
+# the removal is aborted.
+
+[pre-remove]
+# Clean up generated files so git doesn't complain about uncommitted files
+cleanup = """
+# Remove generated .env files
+rm -f .env .env.local .env.backend .env.frontend 2>/dev/null || true
+
+# Kill the tmux session for this branch
+tmux kill-session -t "{{ branch | sanitize }}" 2>/dev/null || true
+
+echo "Cleaned up generated files and tmux session for {{ branch }}"
+"""
+
+# ============================================================================
+# List Configuration
+# ============================================================================
+# Show the dev server URLs in `wt list` output
+
+[list]
+url = "http://localhost:{{ ('frontend-' ~ branch) | hash_port }}"
